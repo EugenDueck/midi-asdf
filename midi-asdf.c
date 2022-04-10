@@ -66,12 +66,9 @@ static int get_midi_source_client() {
       char const* name = snd_seq_client_info_get_name(info);
       if (strcmp(arguments.midi_source, name) == 0)
         return id;
-      /* int num_ports = snd_seq_client_info_get_num_ports(info); */
-      /* printf("Client “%s” #%i, with %i ports\n", name, id, num_ports); */
       status = snd_seq_query_next_client(seq_handle, info);
    }
 
-   /* printf("Found %i clients\n", count); */
    return -1;
 }
 
