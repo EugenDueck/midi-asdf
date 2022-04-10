@@ -2,8 +2,37 @@
 #include <linux/uinput.h>
 #include <fcntl.h>
 #include <string.h>
-
+#include <argp.h>
 #include <alsa/asoundlib.h>
+#include <stdbool.h>
+
+const char *argp_program_version = "midi-asdf 1.0";
+//const char *argp_program_bug_address = "<your@email.address>";
+static char doc[] = "MIDI event to /dev/uinput keyboard converter.";
+static char args_doc[] = "[MIDI_SOURCE]";
+static struct argp_option options[] = {
+  { "modifier-keys", 'm', 0, 0, "Enable modifier keys (Ctrl, Shift, Alt) via MIDI keys"},
+  { 0 },
+};
+
+struct arguments {
+  bool enableModifierKeys;
+  char *midi_source;
+};
+
+static error_t parse_opt(int key, char *arg, struct argp_state *state) {
+  struct arguments *arguments = state->input;
+  switch (key) {
+  case 'm': arguments->enableModifierKeys = true; break;
+  case ARGP_KEY_ARG: arguments->midi_source = arg; break;
+  default: return ARGP_ERR_UNKNOWN;
+  }
+  return 0;
+}
+
+static struct argp argp = { options, parse_opt, args_doc, doc, 0, 0, 0 };
+
+struct arguments arguments;
 
 static snd_seq_t *seq_handle;
 static int in_port;
@@ -15,7 +44,6 @@ void emit(int fd, int type, int code, int val)
   ie.type = type;
   ie.code = code;
   ie.value = val;
-  /* timestamp values below are ignored */
   ie.time.tv_sec = 0;
   ie.time.tv_usec = 0;
 
@@ -34,9 +62,9 @@ void midi_open(void)
 
 snd_seq_event_t *midi_read(void)
 {
-    snd_seq_event_t *ev = NULL;
-    snd_seq_event_input(seq_handle, &ev);
-    return ev;
+  snd_seq_event_t *ev = NULL;
+  snd_seq_event_input(seq_handle, &ev);
+  return ev;
 }
 
 int map_midi_key_to_computer_key(int note)
@@ -47,13 +75,15 @@ int map_midi_key_to_computer_key(int note)
   int offset = -34;
   if (note < 0x23 || note > 0x5b)
     return -1;
-  if (note == 0x3f /* LCtrl */
-      || note == 0x4c /* LShift */
-      || note == 0x58 /* RShift */
-      || note == 0x5a /* LAlt */
-      )
-    return -2;
-  
+  if (!arguments.enableModifierKeys)
+    {
+      if (note == 0x3f /* LCtrl */
+          || note == 0x4c /* LShift */
+          || note == 0x58 /* RShift */
+          || note == 0x5a /* LAlt */
+          )
+        return -2;
+    }
   return ((int) note) + offset;
 }
 
@@ -62,7 +92,7 @@ void midi_process(int fd, snd_seq_event_t *ev)
   if ((ev->type == SND_SEQ_EVENT_NOTEON)||(ev->type == SND_SEQ_EVENT_NOTEOFF))
     {
       int computer_key = map_midi_key_to_computer_key(ev->data.note.note);
-      if (computer_key >= 0) 
+      if (computer_key >= 0)
         {
           int emit_type = ev->type == SND_SEQ_EVENT_NOTEON ? 1 : 0;
           emit(fd, EV_KEY, computer_key, emit_type);
@@ -75,25 +105,25 @@ void midi_process(int fd, snd_seq_event_t *ev)
                  ev->data.note.note,
                  ev->data.note.velocity);
         }
-  }
-  else if(ev->type == SND_SEQ_EVENT_CONTROLLER) 
+    }
+  else if(ev->type == SND_SEQ_EVENT_CONTROLLER)
     {
-      if (ev->data.control.param == 0x43 /* left pedal */) 
+      if (ev->data.control.param == 0x43 /* left pedal */)
         {
           emit(fd, EV_KEY, KEY_LEFTALT, ev->data.control.value == 0 ? 0 : 1);
           emit(fd, EV_SYN, SYN_REPORT, 0);
         }
-      else if (ev->data.control.param == 0x42 /* middle pedal */) 
+      else if (ev->data.control.param == 0x42 /* middle pedal */)
         {
           emit(fd, EV_KEY, KEY_LEFTCTRL, ev->data.control.value == 0 ? 0 : 1);
           emit(fd, EV_SYN, SYN_REPORT, 0);
         }
-      else if (ev->data.control.param == 0x40 /* right pedal */) 
+      else if (ev->data.control.param == 0x40 /* right pedal */)
         {
           emit(fd, EV_KEY, KEY_LEFTSHIFT, ev->data.control.value == 0 ? 0 : 1);
           emit(fd, EV_SYN, SYN_REPORT, 0);
         }
-      else 
+      else
         {
           printf("[%d] Control:  %2x val(%2x)\n", ev->time.tick,
                  ev->data.control.param,
@@ -201,15 +231,18 @@ int tear_down_uinput(int fd)
 }
 
 
-int main(void)
+int main(int argc, char *argv[])
 {
+  arguments.enableModifierKeys = false;
+  argp_parse(&argp, argc, argv, 0, 0, &arguments);
+
   int fd = setup_uinput();
 
   midi_open();
   while (1)
     midi_process(fd, midi_read());
-  
+
   tear_down_uinput(fd);
-  
+
   return 0;
 }
