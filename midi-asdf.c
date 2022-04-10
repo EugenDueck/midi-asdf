@@ -50,14 +50,88 @@ void emit(int fd, int type, int code, int val)
   write(fd, &ie, sizeof(ie));
 }
 
-void midi_open(void)
+static int get_midi_source_client() {
+
+   int count = 0;
+   int status;
+   snd_seq_client_info_t* info;
+
+   snd_seq_client_info_alloca(&info);
+
+   status = snd_seq_get_any_client_info(seq_handle, 0, info);
+
+   while (status >= 0) {
+      count += 1;
+      int id = snd_seq_client_info_get_client(info);
+      char const* name = snd_seq_client_info_get_name(info);
+      if (strcmp(arguments.midi_source, name) == 0)
+        return id;
+      /* int num_ports = snd_seq_client_info_get_num_ports(info); */
+      /* printf("Client “%s” #%i, with %i ports\n", name, id, num_ports); */
+      status = snd_seq_query_next_client(seq_handle, info);
+   }
+
+   /* printf("Found %i clients\n", count); */
+   return -1;
+}
+
+int midi_connect(char midiSourceClient, char midiSourcePort)
 {
-  snd_seq_open(&seq_handle, "default", SND_SEQ_OPEN_INPUT, 0);
+  snd_seq_addr_t sender, dest;
+  sender.client = midiSourceClient;
+  sender.port = midiSourcePort;
+  dest.client = snd_seq_client_id(seq_handle);
+  dest.port = in_port;
+  snd_seq_port_subscribe_t *subs;
+  snd_seq_port_subscribe_alloca(&subs);
+  snd_seq_port_subscribe_set_sender(subs, &sender);
+  snd_seq_port_subscribe_set_dest(subs, &dest);
+  snd_seq_port_subscribe_set_queue(subs, 0);
+  snd_seq_port_subscribe_set_exclusive(subs, 0); // 1: exclusive
+  snd_seq_port_subscribe_set_time_update(subs, 0);
+  snd_seq_port_subscribe_set_time_real(subs, 0);
+  if (snd_seq_subscribe_port(seq_handle, subs) < 0)
+    {
+      snd_seq_close(seq_handle);
+      fprintf(stderr, "Failed connecting to MIDI source %s: %s\n", arguments.midi_source, snd_strerror(errno));
+      return 1;
+    }
+  return 0;
+}
+
+int midi_open(void)
+{
+  if (snd_seq_open(&seq_handle, "default", SND_SEQ_OPEN_INPUT, 0) != 0)
+    {
+      fprintf(stderr, "Error: Cannot open ALSA seq\n");
+      return -1;
+    }
 
   snd_seq_set_client_name(seq_handle, "midi-asdf");
   in_port = snd_seq_create_simple_port(seq_handle, "MIDI source",
                                        SND_SEQ_PORT_CAP_WRITE|SND_SEQ_PORT_CAP_SUBS_WRITE,
                                        SND_SEQ_PORT_TYPE_APPLICATION);
+
+  if (arguments.midi_source != NULL)
+    {
+      int midi_source_id = get_midi_source_client();
+      if (midi_source_id >= 0)
+        {
+          if (midi_connect(midi_source_id, 0) != 0)
+            return -1;
+        }
+      else
+        {
+          fprintf(stderr, "Error: ALSA client '%s' not found\n", arguments.midi_source);
+          return -1;
+        }
+    }
+  return 0;
+}
+
+int midi_close(void)
+{
+  snd_seq_close(seq_handle);
 }
 
 snd_seq_event_t *midi_read(void)
@@ -238,10 +312,13 @@ int main(int argc, char *argv[])
 
   int fd = setup_uinput();
 
-  midi_open();
+  if (midi_open() != 0)
+    return 1;
+
   while (1)
     midi_process(fd, midi_read());
 
+  midi_close();
   tear_down_uinput(fd);
 
   return 0;
