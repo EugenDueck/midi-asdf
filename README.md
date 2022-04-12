@@ -6,6 +6,12 @@ A toy tool that allows a MIDI keyboard (ALSA)  to be used as a computer keyboard
 ![MIDI to ASDF key mapping](./midi-asdf.svg)
 
 ```
-./midi-asdf                    # start the tool, "sudo" may be necessary instead, depending on permissions
-aconnect aconnect 20:0 128:0   # connect your MIDI keyboard to midi-asdf
+# Just start the tool:
+./midi-asdf
+
+# OR, if it does not work due to permission issues with /dev/uinput, sudo:
+sudo ./midi-asdf
+
+# Start the tool and connect it to port 0 of the MIDI sequencer "Roland Digital Piano"
+./midi-asdf "Roland Digital Piano"
 ```
